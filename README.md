@@ -4,19 +4,19 @@ A Burp Suite extension for tracking JavaScript files and URLs in web application
 
 ## Features
 - 24/7 JavaScript Monitoring
-- - ![image](https://github.com/user-attachments/assets/df5c6488-94e3-46d9-9af9-e9524a051749)
+   ![image](https://github.com/user-attachments/assets/df5c6488-94e3-46d9-9af9-e9524a051749)
 - API key configuration
 - Diff Viewer for Quickly identifying code changes.
 - Efficient regex-based JavaScript URL detection to detect APIs, leaked keys, endpoints...
+ ![image](https://github.com/user-attachments/assets/83580a86-182e-4f58-b236-7929e687381d)
 - Clean UI with configuration panel and output area
 
 
 ## Installation
 1. Load extension in Burp Suite Extender tab
-2. Configure API key in JS Tracker tab
-3. Right click as amn
+2. Get your API key from https://jsspy.onrender.com/settings
+3. Place it in JSSpy tab
+
 
 ## Usage
-1. Select HTTP messages in Burp
-2. Right click > "Send to JS Tracker"
-3. View results in JS Tracker tab
+![image](https://github.com/user-attachments/assets/e47ccc6e-f9dc-4b2f-9112-8d8d00766b8e)
