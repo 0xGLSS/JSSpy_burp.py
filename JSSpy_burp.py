@@ -45,7 +45,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         callbacks.addSuiteTab(self)
         
         # Define your API endpoint
-        self.api_endpoint = "http://localhost:3000/api/burp/add"
+        self.api_endpoint = "http://jsspy.xyz/api/burp/add"
         
         print("JSSpy JS Monitor loaded!")
         print("API Endpoint:", self.api_endpoint)
