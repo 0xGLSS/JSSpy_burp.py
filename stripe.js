@@ -7,7 +7,7 @@ const apiEndpoint = "https://api.example.com/v1/";
 // URL Parameter
 const urlWithParam = "https://example.com/data?query=value";
 
-// JavaScript URL
+// JavaScript URLqsf
 const jsFileUrl = "https://cdn.example.com/script.js";
 
 // ========== PREMIUM PATTERNS ==========
