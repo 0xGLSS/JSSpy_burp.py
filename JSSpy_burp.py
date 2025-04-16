@@ -17,15 +17,15 @@ Author: JSSpy Team
 """
 
 # -*- coding: utf-8 -*-
-
 from burp import IBurpExtender, IContextMenuFactory, ITab
-from javax.swing import JMenuItem, JPanel, JTextField, JLabel, JTextArea, JScrollPane, BoxLayout, JButton
+from javax.swing import JMenuItem, JPanel, JTextField, JLabel, JTextArea, JScrollPane, BoxLayout, JButton, SwingWorker
 from java.awt import BorderLayout, Dimension
 from java.util import ArrayList
 from java.net import URL
 import json
 import urllib2
 import re
+import os
 
 class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
     def registerExtenderCallbacks(self, callbacks):
@@ -45,10 +45,35 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         callbacks.addSuiteTab(self)
         
         # Define your API endpoint
-        self.api_endpoint = "http://jsspy.xyz/api/burp/add"
+        self.api_endpoint = "https://www.jsspy.xyz/api/burp/add"
         
-        print("JSSpy JS Monitor loaded!")
-        print("API Endpoint:", self.api_endpoint)
+        # Load saved API key
+        self.loadApiKey()
+        
+        self.log("JSSpy JS Monitor loaded")
+        self.log("API Endpoint: " + self.api_endpoint)
+
+    def loadApiKey(self):
+        try:
+            config_file = os.path.join(os.path.expanduser("~"), ".jsspy_config.json")
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    if 'api_key' in config:
+                        self.apiKeyField.setText(config['api_key'])
+                        self.log("API key loaded from config")
+        except Exception as e:
+            self.log("Error loading API key: " + str(e))
+
+    def saveApiKey(self):
+        try:
+            config_file = os.path.join(os.path.expanduser("~"), ".jsspy_config.json")
+            config = {'api_key': self.apiKeyField.getText()}
+            with open(config_file, 'w') as f:
+                json.dump(config, f)
+            self.log("API key saved to config")
+        except Exception as e:
+            self.log("Error saving API key: " + str(e))
 
     def initUI(self):
         # Create main panel
@@ -65,7 +90,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         configPanel.add(self.apiKeyField)
         
         # Add test button
-        testButton = JButton("Test Connection", actionPerformed=self.testConnection)
+        testButton = JButton("Add Key", actionPerformed=self.testConnection)
         configPanel.add(testButton)
         
         # Add config panel to main panel
@@ -81,27 +106,134 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
         self.panel.add(scrollPane, BorderLayout.CENTER)
 
     def testConnection(self, event):
-        try:
-            api_key = self.apiKeyField.getText()
-            if not api_key:
-                self.log("Please enter an API key")
-                return
+        class TestConnectionWorker(SwingWorker):
+            def __init__(self, parent):
+                SwingWorker.__init__(self)
+                self.parent = parent
+
+            def doInBackground(self):
+                api_key = self.parent.apiKeyField.getText()
+                if not api_key:
+                    self.parent.log("Error: No API key provided")
+                    return
                 
-            url = self.api_endpoint + "?api_key=" + api_key
-            request = urllib2.Request(url)
-            request.add_header('Content-Type', 'application/json')
-            request.add_data(json.dumps({"urls": []}))
+                try:
+                    url = self.parent.api_endpoint + "?api_key=" + api_key
+                    request = urllib2.Request(url)
+                    request.add_header('Content-Type', 'application/json')
+                    request.add_data(json.dumps({"urls": []}))
+                    
+                    response = urllib2.urlopen(request)
+                    if response.getcode() == 200:
+                        self.parent.log("API key is valid")
+                        # Save the API key if it's valid
+                        self.parent.saveApiKey()
+                    else:
+                        self.parent.log("API key is invalid")
+                except Exception as e:
+                    self.parent.log("Connection failed: " + str(e))
             
-            response = urllib2.urlopen(request)
-            if response.getcode() == 200:
-                self.log("Connection successful! API key is valid.")
-            else:
-                self.log("Connection failed! Status code: " + str(response.getcode()))
+            def done(self):
+                pass
+
+        worker = TestConnectionWorker(self)
+        worker.execute()
+
+    def createMenuItems(self, invocation):
+        self.context = invocation
+        menuList = ArrayList()
+        menuList.add(JMenuItem("Send to JSSpy", actionPerformed=lambda x: self.sendToTracker(invocation)))
+        return menuList
+
+    def sendToTracker(self, invocation):
+        api_key = self.apiKeyField.getText()
+        if not api_key:
+            self.log("Error: No API key provided")
+            return
+
+        http_messages = invocation.getSelectedMessages()
+        if http_messages is None or len(http_messages) == 0:
+            self.log("Error: No messages selected")
+            return
+
+        js_pattern = re.compile(r'https?://[^\s<>"\']+?\.js', re.IGNORECASE)
+        js_urls = set()
+
+        try:
+            for message in http_messages:
+                request_info = self.helpers.analyzeRequest(message)
+                url = str(request_info.getUrl())
+                
+                if url.lower().endswith('.js'):
+                    js_urls.add(url)
+                
+                if message.getResponse():
+                    response = message.getResponse()
+                    response_info = self.helpers.analyzeResponse(response)
+                    body_offset = response_info.getBodyOffset()
+                    response_body = self.helpers.bytesToString(response[body_offset:])
+                    found_urls = js_pattern.findall(response_body)
+                    js_urls.update(found_urls)
+
         except Exception as e:
-            self.log("Connection failed! Error: " + str(e))
+            self.log("Error processing messages: " + str(e))
+            return
+
+        if not js_urls:
+            self.log("No JavaScript URLs found")
+            return
+
+        self.log("Processing %d URLs..." % len(js_urls))
+        batch_size = 50
+        js_urls_list = list(js_urls)
+        batches = [js_urls_list[i:i + batch_size] for i in range(0, len(js_urls_list), batch_size)]
+        
+        class SendToTrackerWorker(SwingWorker):
+            def __init__(self, parent, batches, api_key):
+                SwingWorker.__init__(self)
+                self.parent = parent
+                self.batches = batches
+                self.api_key = api_key
+
+            def doInBackground(self):
+                for index, batch in enumerate(self.batches):
+                    try:
+                        data = json.dumps({"urls": batch})
+                        url = "%s?api_key=%s" % (self.parent.api_endpoint, self.api_key)
+                        
+                        request = urllib2.Request(url)
+                        request.add_header('Content-Type', 'application/json')
+                        request.add_data(data)
+                        
+                        response = urllib2.urlopen(request)
+                        result = json.loads(response.read())
+                        
+                        for r in result.get('results', []):
+                            status = r.get('status', 'unknown')
+                            url_str = r.get('url', 'unknown')
+                            message = r.get('message', '')
+                            
+                            msg = "[%s] %s%s" % (
+                                '+' if status == 'success' else '-',
+                                url_str,
+                                " - %s" % message if message else ""
+                            )
+                            self.parent.log(msg)
+                    except Exception as e:
+                        self.parent.log("Error: " + str(e))
+                        continue
+            
+            def done(self):
+                self.parent.log("Processing complete")
+
+        worker = SendToTrackerWorker(self, batches, api_key)
+        worker.execute()
 
     def log(self, message):
-        self.outputArea.append(message + "\n")
+        """Enhanced logging with timestamp"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.outputArea.append("[%s] %s\n" % (timestamp, message))
         self.outputArea.setCaretPosition(self.outputArea.getDocument().getLength())
 
     def getTabCaption(self):
@@ -110,87 +242,3 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, ITab):
     def getUiComponent(self):
         return self.panel
 
-    def createMenuItems(self, invocation):
-        self.context = invocation
-        menuList = ArrayList()
-        menuList.add(JMenuItem("Send to JSSpy", 
-                             actionPerformed=lambda x: self.sendToTracker(invocation)))
-        return menuList
-
-    def sendToTracker(self, invocation):
-        # Get API key from UI
-        api_key = self.apiKeyField.getText()
-        if not api_key:
-            self.log("Please enter an API key in the JSSpy tab")
-            return
-
-        # Get selected messages
-        http_messages = invocation.getSelectedMessages()
-        if http_messages is None or len(http_messages) == 0:
-            self.log("No messages selected")
-            return
-
-        # Pre-compile regex pattern
-        js_pattern = re.compile(r'https?://[^\s<>"\']+?\.js', re.IGNORECASE)
-        js_urls = set()  # Use set for automatic deduplication
-
-        try:
-            for message in http_messages:
-                # Get request details
-                request_info = self.helpers.analyzeRequest(message)
-                url = str(request_info.getUrl())
-                
-                # Check if it's a JavaScript file
-                if url.lower().endswith('.js'):
-                    js_urls.add(url)
-                
-                # Check response for JavaScript URLs
-                if message.getResponse():
-                    response = message.getResponse()
-                    response_info = self.helpers.analyzeResponse(response)
-                    
-                    # Get response body more efficiently
-                    body_offset = response_info.getBodyOffset()
-                    response_body = self.helpers.bytesToString(response[body_offset:])
-                    
-                    # Find JavaScript URLs in response using pre-compiled pattern
-                    found_urls = js_pattern.findall(response_body)
-                    js_urls.update(found_urls)
-
-        except Exception as e:
-            self.log("Error processing messages: %s" % str(e))
-            return
-
-        if not js_urls:
-            self.log("Not a valid JavaScript URL")
-            return
-
-        try:
-            # Prepare the request with all URLs at once
-            data = json.dumps({"urls": list(js_urls)})
-            url = "%s?api_key=%s" % (self.api_endpoint, api_key)
-            
-            # Create and send request
-            request = urllib2.Request(url)
-            request.add_header('Content-Type', 'application/json')
-            request.add_data(data)
-            
-            # Send request and process response
-            response = urllib2.urlopen(request)
-            result = json.loads(response.read())
-            
-            # Log results efficiently
-            self.log("\nResults:")
-            for r in result.get('results', []):
-                status = r.get('status', 'unknown')
-                url = r.get('url', 'unknown')
-                message = r.get('message', '')
-                
-                self.log("[%s] %s%s" % (
-                    '+' if status == 'success' else '-',
-                    url,
-                    " - %s" % message if message else ""
-                ))
-                    
-        except Exception as e:
-            self.log("Error sending to JSSpy: %s" % str(e)) 
